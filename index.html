@@ -363,19 +363,24 @@ function setStatus(msg){ document.getElementById('statusMsg').textContent=msg; }
 
 function loadScript(src){
   return new Promise(resolve=>{
+    // 이미 로드된 경우 스킵
+    if(document.querySelector(`script[src="${src}"]`)){resolve();return;}
     const s=document.createElement('script');
-    s.src=src; s.crossOrigin='anonymous';
-    s.onload=resolve;
-    s.onerror=()=>{ console.warn('Failed to load',src); resolve(); };
+    s.src=src;
+    s.onload=()=>{ console.log('Loaded:',src); resolve(); };
+    s.onerror=()=>{ console.warn('Failed:',src); resolve(); };
     document.head.appendChild(s);
   });
 }
 
 async function initMP(){
   setStatus('📷 카메라 연결 중...');
-  await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js');
-  await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js');
-  await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1620248257/drawing_utils.js');
+
+  // unpkg는 WASM 파일 CORS 헤더가 안정적
+  const CDN='https://unpkg.com/@mediapipe/hands@0.4.1646424915';
+  await loadScript(`${CDN}/hands.js`);
+  await loadScript('https://unpkg.com/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js');
+  await loadScript('https://unpkg.com/@mediapipe/drawing_utils@0.3.1620248257/drawing_utils.js');
 
   if(typeof Hands==='undefined'){
     setStatus('⚠️ MediaPipe 로드 실패 → 마우스 모드');
@@ -384,13 +389,13 @@ async function initMP(){
 
   try{
     const mp=new Hands({
-      locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+      locateFile: f=>`${CDN}/${f}`  // WASM도 같은 CDN에서
     });
     mp.setOptions({
       maxNumHands:2,
       modelComplexity:1,
-      minDetectionConfidence:0.72,
-      minTrackingConfidence:0.65,
+      minDetectionConfidence:0.7,
+      minTrackingConfidence:0.6,
     });
 
     mp.onResults(res=>{
@@ -416,17 +421,28 @@ async function initMP(){
     });
 
     const vid=document.getElementById('vid');
+
+    // 먼저 카메라 권한 직접 요청 (Safari/iOS 대응)
+    setStatus('📷 카메라 권한 요청 중...');
+    const stream = await navigator.mediaDevices.getUserMedia({video:true});
+    vid.srcObject = stream;
+    await new Promise(r=>{ vid.onloadedmetadata=r; });
+
     const cam=new Camera(vid,{
       onFrame: async()=>{ if(mp) await mp.send({image:vid}); },
       width:640, height:480,
     });
     await cam.start();
     setStatus('✅ 손 인식 활성화! 양손을 공 가까이 대세요');
-    setTimeout(()=>setStatus(''),3000);
+    setTimeout(()=>setStatus(''),3500);
   } catch(e){
     console.warn('MP error:',e);
-    setStatus('⚠️ 웹캠 오류 → 마우스 모드로 전환');
-    enableMouse();
+    if(e.name==='NotAllowedError'){
+      setStatus('⚠️ 카메라 권한을 허용해주세요');
+    } else {
+      setStatus('⚠️ 오류 발생 → 마우스 모드로 전환');
+      enableMouse();
+    }
   }
 }
 
